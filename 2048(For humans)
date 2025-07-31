@@ -1,0 +1,239 @@
+import pygame
+import random
+import os
+
+pygame.init()
+
+SCREEN_WIDTH = 480
+SCREEN_HEIGHT = 600
+GRID_SIZE = 4
+TILE_SIZE = 100
+TILE_MARGIN = 15
+GRID_WIDTH = GRID_HEIGHT = TILE_MARGIN * (GRID_SIZE + 1) + TILE_SIZE * GRID_SIZE
+GRID_X = (SCREEN_WIDTH - GRID_WIDTH) / 2
+GRID_Y = 150
+ANIMATION_DURATION = 200
+
+COLORS = {
+    'background': pygame.Color("#faf8ef"),
+    'grid_background': pygame.Color("#bbada0"),
+    'text_dark': pygame.Color("#776e65"),
+    'text_light': pygame.Color("#f9f6f2"),
+    2: pygame.Color("#eee4da"),
+    4: pygame.Color("#ede0c8"),
+    8: pygame.Color("#f2b179"),
+    16: pygame.Color("#f59563"),
+    32: pygame.Color("#f67c5f"),
+    64: pygame.Color("#f65e3b"),
+    128: pygame.Color("#edcf72"),
+    256: pygame.Color("#edcc61"),
+    512: pygame.Color("#edc850"),
+    1024: pygame.Color("#edc53f"),
+    2048: pygame.Color("#edc22e"),
+    'other': pygame.Color("#3c3a32")
+}
+
+FONT_BIG = pygame.font.Font(None, 60)
+FONT_MEDIUM = pygame.font.Font(None, 48)
+FONT_SMALL = pygame.font.Font(None, 36)
+
+class Game2048:
+    def __init__(self):
+        self.grid = [[0] * GRID_SIZE for _ in range(GRID_SIZE)]
+        self.score = 0
+        self.high_score = 0
+        self.win = False
+        self.game_over = False
+        self.animations = []  # 存储合并动画队列
+        self.load_high_score()
+        self.add_new_tile()
+        self.add_new_tile()
+
+    def add_new_tile(self):
+        empty = [(r, c) for r in range(GRID_SIZE) for c in range(GRID_SIZE) if self.grid[r][c] == 0]
+        if not empty: return
+        r, c = random.choice(empty)
+        self.grid[r][c] = 2 if random.random() < 0.9 else 4
+
+    def move(self, direction):
+        moved = False
+        merge_positions = []
+        if direction == 'up':
+            for c in range(GRID_SIZE):
+                col = [self.grid[r][c] for r in range(GRID_SIZE)]
+                new_col, pos = self.merge(col)
+                if col != new_col: moved = True
+                for r in range(GRID_SIZE):
+                    self.grid[r][c] = new_col[r]
+                merge_positions += [(p, c) for p in pos]
+        elif direction == 'down':
+            for c in range(GRID_SIZE):
+                col = [self.grid[r][c] for r in range(GRID_SIZE-1, -1, -1)]
+                new_col, pos = self.merge(col)
+                if col != new_col: moved = True
+                for r in range(GRID_SIZE):
+                    self.grid[GRID_SIZE-1-r][c] = new_col[r]
+                merge_positions += [(GRID_SIZE-1-p, c) for p in pos]
+        elif direction == 'left':
+            for r in range(GRID_SIZE):
+                row = self.grid[r][:]
+                new_row, pos = self.merge(row)
+                if row != new_row: moved = True
+                self.grid[r] = new_row
+                merge_positions += [(r, p) for p in pos]
+        elif direction == 'right':
+            for r in range(GRID_SIZE):
+                row = self.grid[r][::-1]
+                new_row, pos = self.merge(row)
+                if row != new_row: moved = True
+                self.grid[r] = new_row[::-1]
+                merge_positions += [(r, GRID_SIZE-1-p) for p in pos]
+
+        if moved:
+            now = pygame.time.get_ticks()
+            for (r, c) in merge_positions:
+                self.animations.append({'r': r, 'c': c, 'start': now})
+            self.add_new_tile()
+            self.check_game_over()
+            if self.score > self.high_score:
+                self.high_score = self.score
+                self.save_high_score()
+            if self.check_win():
+                self.win = True
+
+    def merge(self, line):
+        new_line = [i for i in line if i]
+        score_add = 0
+        merge_pos = []
+        i = 0
+        while i < len(new_line)-1:
+            if new_line[i] == new_line[i+1]:
+                new_line[i] *= 2
+                score_add += new_line[i]
+                new_line.pop(i+1)
+                merge_pos.append(i)
+            i += 1
+        self.score += score_add
+        while len(new_line) < GRID_SIZE:
+            new_line.append(0)
+        return new_line, merge_pos
+
+    def check_win(self):
+        return any(2048 in row for row in self.grid)
+
+    def check_game_over(self):
+        if any(0 in row for row in self.grid):
+            self.game_over = False
+            return
+        for r in range(GRID_SIZE):
+            for c in range(GRID_SIZE):
+                v = self.grid[r][c]
+                if c<GRID_SIZE-1 and v==self.grid[r][c+1]: return
+                if r<GRID_SIZE-1 and v==self.grid[r+1][c]: return
+        self.game_over = True
+
+    def reset(self):
+        self.grid = [[0]*GRID_SIZE for _ in range(GRID_SIZE)]
+        self.score = 0; self.win = False; self.game_over = False
+        self.animations.clear()
+        self.add_new_tile(); self.add_new_tile()
+
+    def save_high_score(self):
+        try:
+            with open("high_score.txt","w") as f: f.write(str(self.high_score))
+        except: pass
+
+    def load_high_score(self):
+        try:
+            with open("high_score.txt","r") as f: self.high_score=int(f.read())
+        except: self.high_score=0
+
+# --- 绘图函数 ---
+def draw_game(screen, game):
+    now = pygame.time.get_ticks()
+    screen.fill(COLORS['background'])
+    screen.blit(FONT_BIG.render("2048",True,COLORS['text_dark']),(GRID_X,40))
+    draw_score_box(screen,"SCORE",game.score,GRID_X+200,40)
+    draw_score_box(screen,"BEST",game.high_score,GRID_X+340,40)
+    pygame.draw.rect(screen,COLORS['grid_background'],(GRID_X,GRID_Y,GRID_WIDTH,GRID_HEIGHT),border_radius=10)
+    # 移除过期动画
+    game.animations = [a for a in game.animations if now - a['start'] < ANIMATION_DURATION]
+    for r in range(GRID_SIZE):
+        for c in range(GRID_SIZE):
+            merged_anim = next((a for a in game.animations if a['r']==r and a['c']==c),None)
+            draw_tile(screen,r,c,game.grid[r][c],now,merged_anim)
+    if game.win: draw_win_overlay(screen)
+    if game.game_over: draw_game_over_overlay(screen)
+
+def draw_score_box(screen,label,score,x,y):
+    pygame.draw.rect(screen,COLORS['grid_background'],(x,y,120,60),border_radius=5)
+    screen.blit(FONT_SMALL.render(label,True,COLORS['text_light']),(x+60- FONT_SMALL.size(label)[0]/2,y+10))
+    screen.blit(FONT_MEDIUM.render(str(score),True,COLORS['text_light']),(x+60-FONT_MEDIUM.size(str(score))[0]/2,y+30))
+
+def draw_tile(screen,r,c,value,now,anim):
+    x0 = GRID_X + TILE_MARGIN*(c+1) + TILE_SIZE*c
+    y0 = GRID_Y + TILE_MARGIN*(r+1) + TILE_SIZE*r
+    if anim:
+        elapsed = now - anim['start']
+        prog = elapsed/ANIMATION_DURATION
+        scale = 1 + 0.2 * (1 - abs(prog*2-1))
+    else:
+        scale=1
+    size = TILE_SIZE*scale
+    x = x0 + (TILE_SIZE-size)/2
+    y = y0 + (TILE_SIZE-size)/2
+    pygame.draw.rect(screen,COLORS.get(value,COLORS['other']),(x,y,size,size),border_radius=5)
+    if value:
+        color = COLORS['text_dark'] if value in (2,4) else COLORS['text_light']
+        font = FONT_BIG if value<100 else FONT_MEDIUM if value<1000 else FONT_SMALL
+        txt = font.render(str(value),True,color)
+        rect = txt.get_rect(center=(x+size/2,y+size/2))
+        screen.blit(txt,rect)
+
+def draw_game_over_overlay(screen):
+    overlay=pygame.Surface((GRID_WIDTH,GRID_HEIGHT),pygame.SRCALPHA)
+    overlay.fill((238,228,218,180)); screen.blit(overlay,(GRID_X,GRID_Y))
+    t=FONT_BIG.render("Game Over!",True,COLORS['text_dark'])
+    screen.blit(t,t.get_rect(center=(SCREEN_WIDTH/2,SCREEN_HEIGHT/2)))
+    t2=FONT_SMALL.render("Click or Press Key to Restart",True,COLORS['text_dark'])
+    screen.blit(t2,t2.get_rect(center=(SCREEN_WIDTH/2,SCREEN_HEIGHT/2+50)))
+
+def draw_win_overlay(screen):
+    overlay=pygame.Surface((GRID_WIDTH,GRID_HEIGHT),pygame.SRCALPHA)
+    overlay.fill((237,194,46,180)); screen.blit(overlay,(GRID_X,GRID_Y))
+    t=FONT_BIG.render("You Win!",True,COLORS['text_light'])
+    screen.blit(t,t.get_rect(center=(SCREEN_WIDTH/2,SCREEN_HEIGHT/2)))
+
+# --- 主循环 ---
+def main():
+    screen=pygame.display.set_mode((SCREEN_WIDTH,SCREEN_HEIGHT))
+    pygame.display.set_caption("2048 - Drag or Use Keys")
+    clock=pygame.time.Clock(); game=Game2048()
+    dragging=False; start=None
+    rect=pygame.Rect(GRID_X,GRID_Y,GRID_WIDTH,GRID_HEIGHT)
+    running=True
+    while running:
+        for e in pygame.event.get():
+            if e.type==pygame.QUIT: running=False
+            if game.game_over or game.win:
+                if e.type in (pygame.KEYDOWN,pygame.MOUSEBUTTONDOWN): game.reset()
+                continue
+            if e.type==pygame.KEYDOWN:
+                dir=None
+                if e.key in (pygame.K_UP,pygame.K_w): dir='up'
+                elif e.key in (pygame.K_DOWN,pygame.K_s): dir='down'
+                elif e.key in (pygame.K_LEFT,pygame.K_a): dir='left'
+                elif e.key in (pygame.K_RIGHT,pygame.K_d): dir='right'
+                if dir: game.move(dir)
+            if e.type==pygame.MOUSEBUTTONDOWN and e.button==1 and rect.collidepoint(e.pos):
+                dragging=True; start=e.pos
+            if e.type==pygame.MOUSEBUTTONUP and e.button==1 and dragging:
+                dragging=False; dx=e.pos[0]-start[0]; dy=e.pos[1]-start[1]
+                if abs(dx)>abs(dy) and abs(dx)>30: game.move('right' if dx>0 else 'left')
+                elif abs(dy)>30: game.move('down' if dy>0 else 'up')
+        draw_game(screen,game)
+        pygame.display.flip(); clock.tick(60)
+    pygame.quit()
+
+if __name__=="__main__": main()
+                                        

@@ -29,9 +29,9 @@ A Python implementation of the 2048 game with two modes: human-playable and AI-d
 
 ```bash
 git clone https://github.com/Piechicken/2048.git
-cd 2048
+cd 2048,,,
 
-Usage
+## Usage
 
 Human Mode
 

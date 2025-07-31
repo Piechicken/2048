@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>2048 AI with Merge Animation and Buttons</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #faf8ef;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    canvas {
+      background: #faf8ef;
+      margin-top: 20px;
+      border-radius: 8px;
+    }
+    .controls {
+      margin-top: 10px;
+    }
+    button {
+      padding: 10px 20px;
+      margin: 0 15px;
+      font-size: 16px;
+      border: none;
+      border-radius: 5px;
+      background-color: #8f7a66;
+      color: #faf8ef;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #9c8b79;
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="gameCanvas" width="700" height="800"></canvas>
+<div class="controls">
+  <button id="saveBtn">Save</button>
+  <button id="loadBtn">Load</button>
+</div>
+
+<script>
+  // --- 配置常量 ---
+  const SIZE = 4;
+  const WIDTH = 700, HEIGHT = 800;
+  const TILE_MARGIN = 15;
+  const TILE_SIZE = Math.floor((WIDTH - TILE_MARGIN*(SIZE+1)) / SIZE);
+  const GRID_WIDTH = TILE_SIZE*SIZE + TILE_MARGIN*(SIZE+1);
+  const OFFSET_X = (WIDTH - GRID_WIDTH) / 2;
+  const OFFSET_Y = 100;
+
+  const COLORS = {
+    background: '#faf8ef',
+    grid: '#bbada0',
+    textDark: '#776e65',
+    textLight: '#f9f6f2',
+    0: '#cdc1b4', 2: '#eee4da', 4: '#ede0c8', 8: '#f2b179',
+    16: '#f59563', 32: '#f67c5f', 64: '#f65e3b', 128: '#edcf72',
+    256: '#edcc61', 512: '#edc850', 1024: '#edc53f', 2048: '#edc22e',
+    other: '#3c3a32'
+  };
+
+  // --- Canvas 与上下文 ---
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+
+  // 存储正在执行合并动画的瓷砖
+  let animations = [];
+
+  // --- 游戏逻辑 ---
+  class Game2048 {
+    constructor() {
+      this.grid = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
+      this.score = 0;
+      this.mergedTiles = [];
+      this.addTile();
+      this.addTile();
+    }
+    getEmptyCells() {
+      return this.grid.flatMap((row, i) =>
+        row.map((v, j) => v === 0 ? [i, j] : null).filter(Boolean)
+      );
+    }
+    addTile() {
+      const empty = this.getEmptyCells();
+      if (!empty.length) return;
+      const [i, j] = empty[Math.floor(Math.random() * empty.length)];
+      this.grid[i][j] = Math.random() < 0.1 ? 4 : 2;
+    }
+    transpose(g) {
+      return g[0].map((_, i) => g.map(row => row[i]));
+    }
+    reverse(g) {
+      return g.map(row => row.slice().reverse());
+    }
+    mergeAndSlide(g) {
+      this.mergedTiles = [];
+      const newGrid = g.map((row, rowIndex) => {
+        const filtered = row.filter(v => v);
+        const merged = [];
+        for (let i = 0; i < filtered.length; i++) {
+          if (filtered[i] === filtered[i+1]) {
+            const val = filtered[i] * 2;
+            this.score += val;
+            merged.push(val);
+            // 记录合并后出现的格子位置
+            this.mergedTiles.push([rowIndex, merged.length - 1]);
+            i++;
+          } else {
+            merged.push(filtered[i]);
+          }
+        }
+        while (merged.length < SIZE) merged.push(0);
+        return merged;
+      });
+      return newGrid;
+    }
+    move(dir) {
+      const old = JSON.stringify(this.grid);
+      if (dir === 0) {
+        this.grid = this.transpose(this.grid);
+        this.grid = this.mergeAndSlide(this.grid);
+        this.grid = this.transpose(this.grid);
+      } else if (dir === 1) {
+        this.grid = this.reverse(this.grid);
+        this.grid = this.mergeAndSlide(this.grid);
+        this.grid = this.reverse(this.grid);
+      } else if (dir === 2) {
+        this.grid = this.transpose(this.grid);
+        this.grid = this.reverse(this.grid);
+        this.grid = this.mergeAndSlide(this.grid);
+        this.grid = this.reverse(this.grid);
+        this.grid = this.transpose(this.grid);
+      } else if (dir === 3) {
+        this.grid = this.mergeAndSlide(this.grid);
+      }
+      if (JSON.stringify(this.grid) !== old) {
+        this.addTile();
+        // 注册合并动画
+        const now = performance.now();
+        this.mergedTiles.forEach(([r, c]) => {
+          animations.push({ r, c, time: now });
+        });
+        return true;
+      }
+      return false;
+    }
+    canMove() {
+      if (this.getEmptyCells().length) return true;
+      for (let i = 0; i < SIZE; i++) {
+        for (let j = 0; j < SIZE; j++) {
+          if (j < SIZE - 1 && this.grid[i][j] === this.grid[i][j+1]) return true;
+          if (i < SIZE - 1 && this.grid[i][j] === this.grid[i+1][j]) return true;
+        }
+      }
+      return false;
+    }
+    isGameOver() {
+      return !this.canMove();
+    }
+  }
+
+  // --- AI 算法（Expectimax + 启发式） ---
+  class AIPlayer {
+    constructor() {
+      const W = [
+        [13,12,11,10],
+        [6,7,8,9],
+        [5,4,3,2],
+        [0,1,1,0]
+      ];
+      this.weights = W.map(row => row.map(v => 4 ** v));
+    }
+    evaluate(game) {
+      let score = game.getEmptyCells().length * 1000;
+      for (let i = 0; i < SIZE; i++) {
+        for (let j = 0; j < SIZE; j++) {
+          const v = game.grid[i][j];
+          score += v * this.weights[i][j];
+          if (v) {
+            const logV = Math.log2(v);
+            if (j < SIZE - 1 && game.grid[i][j+1]) {
+              score -= Math.abs(logV - Math.log2(game.grid[i][j+1])) * 10;
+            }
+            if (i < SIZE - 1 && game.grid[i+1][j]) {
+              score -= Math.abs(logV - Math.log2(game.grid[i+1][j])) * 10;
+            }
+          }
+        }
+      }
+      return score;
+    }
+    search(game, depth, playerTurn) {
+      if (depth === 0 || game.isGameOver()) {
+        return this.evaluate(game);
+      }
+      if (playerTurn) {
+        let best = -Infinity;
+        for (let m = 0; m < 4; m++) {
+          const copy = JSON.parse(JSON.stringify(game));
+          const sim = new Game2048();
+          Object.assign(sim, copy);
+          if (sim.move(m)) {
+            best = Math.max(best, this.search(sim, depth - 1, false));
+          }
+        }
+        return best;
+      } else {
+        const empty = game.getEmptyCells();
+        if (!empty.length) return this.evaluate(game);
+        let total = 0;
+        for (const [i,j] of empty) {
+          for (const val of [2,4]) {
+            const copy = JSON.parse(JSON.stringify(game));
+            const sim = new Game2048();
+            Object.assign(sim, copy);
+            sim.grid[i][j] = val;
+            total += this.search(sim, depth - 1, true) * (val === 2 ? 0.9 : 0.1);
+          }
+        }
+        return total / empty.length;
+      }
+    }
+    getBestMove(game) {
+      let best = -Infinity, move = 0;
+      const depth = game.getEmptyCells().length > 5 ? 3 : 4;
+      for (let m = 0; m < 4; m++) {
+        const copy = JSON.parse(JSON.stringify(game));
+        const sim = new Game2048();
+        Object.assign(sim, copy);
+        if (sim.move(m)) {
+          const sc = this.search(sim, depth, false);
+          if (sc > best) {
+            best = sc;
+            move = m;
+          }
+        }
+      }
+      return move;
+    }
+  }
+
+  // --- 圆角矩形辅助 ---
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
+  // --- 绘制函数 ---
+  const game = new Game2048();
+  const ai = new AIPlayer();
+
+  function draw() {
+    const now = performance.now();
+    // 背景
+    ctx.fillStyle = COLORS.background;
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+    // 标题 & 分数
+    ctx.fillStyle = COLORS.textDark;
+    ctx.font = '60px Arial';
+    ctx.textAlign = 'left';
+    ctx.fillText('2048', OFFSET_X, 60);
+    ctx.font = '24px Arial';
+    ctx.fillText('Score: ' + game.score, OFFSET_X, 90);
+
+    // 网格背景
+    ctx.fillStyle = COLORS.grid;
+    ctx.fillRect(OFFSET_X, OFFSET_Y, GRID_WIDTH, GRID_WIDTH);
+
+    // 绘制瓷砖
+    let reached2048 = false;
+    // 清理过期动画
+    animations = animations.filter(a => now - a.time < 200);
+    for (let i = 0; i < SIZE; i++) {
+      for (let j = 0; j < SIZE; j++) {
+        const v = game.grid[i][j];
+        const x = OFFSET_X + TILE_MARGIN + j * (TILE_SIZE + TILE_MARGIN);
+        const y = OFFSET_Y + TILE_MARGIN + i * (TILE_SIZE + TILE_MARGIN);
+
+        // 动画缩放
+        let scale = 1;
+        animations.forEach(a => {
+          if (a.r === i && a.c === j) {
+            const t = (now - a.time) / 200;
+            scale = 1 + 0.3 * Math.sin(Math.PI * t);
+          }
+        });
+
+        // 绘制瓷砖
+        ctx.save();
+        const cx = x + TILE_SIZE / 2;
+        const cy = y + TILE_SIZE / 2;
+        ctx.translate(cx, cy);
+        ctx.scale(scale, scale);
+        ctx.fillStyle = v ? COLORS[v] || COLORS.other : COLORS[0];
+        roundRect(ctx, -TILE_SIZE/2, -TILE_SIZE/2, TILE_SIZE, TILE_SIZE, 5);
+        ctx.fill();
+
+        if (v) {
+          ctx.fillStyle = v <= 4 ? COLORS.textDark : COLORS.textLight;
+          ctx.font = v < 1000 ? '32px Arial' : '24px Arial';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(v, 0, 0);
+          if (v === 2048) reached2048 = true;
+        }
+        ctx.restore();
+      }
+    }
+
+    // 到达2048提示
+    if (reached2048) {
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.fillRect(OFFSET_X, HEIGHT/2 - 60, GRID_WIDTH, 100);
+      ctx.fillStyle = COLORS.textDark;
+      ctx.font = '48px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('Reached 2048!', WIDTH/2, HEIGHT/2);
+    }
+
+    // Game Over
+    if (game.isGameOver()) {
+      ctx.fillStyle = 'rgba(238,228,218,0.7)';
+      ctx.fillRect(OFFSET_X, OFFSET_Y, GRID_WIDTH, GRID_WIDTH);
+      ctx.fillStyle = COLORS.textDark;
+      ctx.font = '48px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('GAME OVER', WIDTH/2, HEIGHT/2);
+    }
+  }
+
+  // --- HTML 按钮交互 ---
+  document.getElementById('saveBtn').addEventListener('click', () => {
+    localStorage.setItem('2048-save', JSON.stringify({
+      grid: game.grid,
+      score: game.score
+    }));
+    alert('Game saved!');
+  });
+
+  document.getElementById('loadBtn').addEventListener('click', () => {
+    const data = JSON.parse(localStorage.getItem('2048-save') || '{}');
+    if (data.grid) {
+      game.grid = data.grid;
+      game.score = data.score;
+      alert('Game loaded!');
+    } else {
+      alert('No saved game found.');
+    }
+  });
+
+  // --- 主循环 ---
+  function loop() {
+    if (!game.isGameOver()) {
+      const dir = ai.getBestMove(game);
+      game.move(dir);
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  loop();
+</script>
+</body>
+</html>
